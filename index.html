@@ -2318,20 +2318,23 @@ function sceneFinal() {
 // ═══════════════════════════════════════════════
 // KEYBOARD CONTROLS
 // ═══════════════════════════════════════════════
-// Attach start button
+// Attach start button — один обработчик touchend для iOS
+// iOS требует: AudioContext.resume() и startGame() в ОДНОМ обработчике одного события
 ready(function() {
   var btn = document.getElementById('start-btn');
   if (!btn) return;
-  btn.addEventListener('touchstart', function(e) {
-    // touchstart — самый ранний момент, iOS точно считает его жестом
-    // Запускаем аудио здесь, до startGame
-    if (window.Music) window.Music.tryStart();
-  }, { passive: true });
+
   btn.addEventListener('touchend', function(e) {
     e.preventDefault();
+    // Шаг 1: создаём и разблокируем AudioContext прямо здесь
+    if (window.Music) window.Music.tryStart();
+    // Шаг 2: запускаем игру в том же обработчике
     startGame();
   }, { passive: false });
-  btn.addEventListener('click', function() {
+
+  // Десктоп: mouseup — тоже один обработчик
+  btn.addEventListener('click', function(e) {
+    if (window.Music) window.Music.tryStart();
     startGame();
   });
 });
@@ -2571,31 +2574,30 @@ const Music = (() => {
     bs.lineHeight = '1';
     bs.padding = '0';
     bs.boxSizing = 'border-box';
-    muteBtn.addEventListener('touchstart', function(e){
+    muteBtn.addEventListener('touchend', function(e){
       e.preventDefault();
       toggleMute();
     }, { passive: false });
     muteBtn.addEventListener('click', function(e) {
-      // click — для десктопа
       toggleMute();
     });
     document.body.appendChild(muteBtn);
   }
 
   function tryStart() {
-    if (playing || muted) return;
+    if (muted) return;
+    // Создаём ctx если нет
     if (!ctx) {
       try {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
       } catch(e) { return; }
     }
-    // resume() вызываем синхронно — НЕ ждём .then()
-    // iOS разблокирует ctx синхронно если мы внутри touchstart/touchend
-    if (ctx.state === 'suspended') {
+    // Всегда вызываем resume() — iOS требует этого при каждом новом жесте
+    // если ctx уже running — resume() просто ничего не делает
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
       ctx.resume();
     }
-    // Запускаем loop сразу — ноты планируются через ctx.currentTime + offset,
-    // к моменту их воспроизведения ctx уже будет running
+    // Запускаем loop если ещё не играем
     if (!playing) {
       playing = true;
       startLoop();
@@ -2604,17 +2606,8 @@ const Music = (() => {
 
   ready(function() {
     createMuteButton();
-    var startBtn = document.getElementById('start-btn');
-    if (startBtn) {
-      // touchstart — единственный надёжный момент для iOS AudioContext
-      startBtn.addEventListener('touchstart', function() {
-        tryStart();
-      }, { passive: true });
-      // десктоп
-      startBtn.addEventListener('mousedown', function() {
-        tryStart();
-      });
-    }
+    // Аудио запускается из attachStartBtn (touchend) — там и tryStart() и startGame()
+    // Здесь дополнительных listeners не вешаем чтобы не дублировать
   });
 
   // toggleMute тоже использует tryStart
